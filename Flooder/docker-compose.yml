@@ -1,5 +1,7 @@
 version: "3.3"
 services:
   scanner:
-     tty: true
      build: .
+     environment:
+      victim: 30.217.192.233:8080
+      measure: 30.217.192.203:8080

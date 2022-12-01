@@ -1,7 +1,11 @@
 version: "3.3"
 services:
   server:
-     tty: true
      build: .
      ports:
       - 8080:8080
+     environment:
+      victim: http://30.217.192.233:8080/json
+      logs: logs.txt
+      port: 8080
+      sample_density: 1

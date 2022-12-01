@@ -4,13 +4,13 @@ import requests
 import logging
 from threading import Thread, Lock
 from flask import Flask, request
+import os
+
 log = logging.getLogger('werkzeug')
-log.setLevel(logging.ERROR)
-
-victim='http://127.0.0.1:8080/'
-
+log.setLevel(logging.INFO)
+config=dict(os.environ)
 app = Flask(__name__)
-f=open("logs","w")
+f=open(config['logs'],'w')
 run_lock=Lock()
 stop=False
 worker=''
@@ -23,7 +23,7 @@ def create_log_entry(epoch,event,rtt):
 def measure_rtt(event,sample_density):
 	while(True):
 		start=time.time()
-		requests.get(victim)
+		requests.get(config['victim'])
 		end=time.time()
 		create_log_entry(start,event,end-start)
 		run_lock.acquire()
@@ -40,6 +40,13 @@ def measure_rtt(event,sample_density):
 @app.route("/On/Iteration",methods=["GET"])
 @app.route("/Off/Iteration",methods=["GET"])
 def log_event():
+	global worker
+	run_lock.acquire()
+	global stop
+	stop = True
+	run_lock.release()
+	if worker!='':
+		worker.join()
 	#asyncio.create_task(create_log_entry(time.time(),request.path,-1))
 	create_log_entry(time.time(),request.path,-1)
 	return "{success:True}"
@@ -57,7 +64,7 @@ def measure_event():
 	if worker!='':
 		worker.join()
 	run_lock.acquire()
-	worker=Thread(target=measure_rtt,args=(request.path,1,))
+	worker=Thread(target=measure_rtt,args=(request.path,int(config['sample_density']),))
 	stop = False
 	run_lock.release()
 	worker.start()
@@ -70,9 +77,10 @@ def end():
 	global stop
 	stop = True
 	run_lock.release()
-	worker.join()
+	if worker!='':
+		worker.join()
 	f.close()
 	return "{success:True}"
 
 if __name__ == "__main__":
-	app.run(debug=True,host="0.0.0.0",port=8080)
+	app.run(debug=True,host="0.0.0.0",port=config['port'])
